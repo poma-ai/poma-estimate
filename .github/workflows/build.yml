@@ -28,7 +28,17 @@ jobs:
       # uv-managed Python links OpenSSL statically, so PyInstaller cannot bundle a stale
       # libssl next to the cryptography wheel's own copy (the v0.2.0 macOS x86_64 failure).
       - name: Install deps
+        if: matrix.os != 'macos-15-intel'
         run: uv sync --python 3.12 --group dev
+      # No macOS x86_64 wheel exists for cryptography, so it is compiled here. Link OpenSSL
+      # statically: otherwise PyInstaller bundles a libssl.3.dylib that does not match the one
+      # the compiled module was linked against (v0.2.0 smoke test: SSL_get0_group_name missing).
+      - name: Install deps (macOS x86_64, static OpenSSL for the cryptography build)
+        if: matrix.os == 'macos-15-intel'
+        env:
+          OPENSSL_STATIC: "1"
+          OPENSSL_DIR: /usr/local/opt/openssl@3
+        run: uv sync --python 3.12 --group dev --no-cache-dir
       - name: Build
         shell: bash
         run: |
