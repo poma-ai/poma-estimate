@@ -64,7 +64,7 @@ jobs:
           uv run python -c "open('smoke/a.txt','w').write('hello world ' * 3000)"
           ./dist/${{ matrix.artifact }}* smoke --json > out.json
           ./dist/${{ matrix.artifact }}* --version
-          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then ./dist/${{ matrix.artifact }}* --version | grep -qF "${GITHUB_REF_NAME#v}"; fi
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then ./dist/${{ matrix.artifact }}* --version | grep -qxF "poma-estimate ${GITHUB_REF_NAME#v}"; fi
           uv run python -c "import json; d=json.load(open('out.json')); assert d['total_units']>=5 and d['files_measured']==1 and not d['files'][0]['error'], d"
       - uses: actions/upload-artifact@v4
         with:
