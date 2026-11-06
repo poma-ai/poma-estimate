@@ -1,0 +1,34 @@
+name: Tests (macOS, Linux, Windows)
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-14, ubuntu-22.04, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          version: "0.8.15"
+      - name: Tests
+        run: uv run --python 3.12 pytest -q
+      - name: CLI smoke test (the colleague workflow)
+        shell: bash
+        run: |
+          mkdir -p smoke/sub
+          uv run --python 3.12 python -c "open('smoke/a.txt','w',encoding='utf-8').write('hello world ' * 3000); open('smoke/sub/café 資料.md','w',encoding='utf-8').write('# t\n' + 'word ' * 2000)"
+          uv run --python 3.12 poma-estimate smoke > out.txt
+          cat out.txt
+          head -1 out.txt | grep -q '^units '
+          grep -q '^Plain text and data (TXT, CSV, JSON, ...): 1 file,' out.txt
+          grep -q '^Markdown: 1 file,' out.txt
+          uv run --python 3.12 poma-estimate smoke --json > out.json
+          uv run --python 3.12 python -c "import json; d=json.load(open('out.json')); assert d['files_measured'] == 2 and d['total_units'] >= 5 and all(not f['error'] for f in d['files']) and d['counts']['markdown']['tokens'] > 1000, d"

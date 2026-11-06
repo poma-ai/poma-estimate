@@ -1,0 +1,74 @@
+name: Build binaries
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14            # arm64
+            artifact: poma-estimate-macos-arm64
+          - os: macos-15-intel      # x86_64
+            artifact: poma-estimate-macos-x86_64
+          - os: ubuntu-22.04        # old glibc = runs on more distros
+            artifact: poma-estimate-linux-x86_64
+          - os: windows-latest
+            artifact: poma-estimate-windows.exe
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .
+          pip install pyinstaller
+      - name: Build
+        shell: bash
+        run: |
+          SEP=":"; [ "$RUNNER_OS" = "Windows" ] && SEP=";"
+          pyinstaller --onefile \
+            --name "${{ matrix.artifact }}" \
+            --hidden-import tiktoken_ext.openai_public \
+            --hidden-import tiktoken_ext \
+            --collect-data tiktoken_ext \
+            --add-data "src/poma_estimate/data${SEP}poma_estimate/data" \
+            --optimize 2 \
+            --noconfirm \
+            src/poma_estimate/__main__.py
+      - name: Smoke test (real run, JSON checked)
+        shell: bash
+        run: |
+          mkdir smoke
+          python -c "open('smoke/a.txt','w').write('hello world ' * 3000)"
+          ./dist/${{ matrix.artifact }}* smoke --json > out.json
+          python -c "import json; d=json.load(open('out.json')); assert d['total_units']>=5 and d['files_measured']==1 and not d['files'][0]['error'], d"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: dist/${{ matrix.artifact }}*
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: out
+          merge-multiple: true
+      - name: Checksums + release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cd out && sha256sum poma-estimate-* > SHA256SUMS && cd ..
+          gh release create "${{ github.ref_name }}" out/* --repo "${{ github.repository }}" --title "${{ github.ref_name }}" --notes "Run the one-line installer from the README."

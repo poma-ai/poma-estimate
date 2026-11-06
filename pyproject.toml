@@ -1,0 +1,44 @@
+[project]
+name = "poma-estimate"
+version = "0.1.0"
+description = "Scan a folder and count POMA units per file before uploading."
+readme = "README.md"
+requires-python = ">=3.11"
+authors = [{ name = "POMA AI GmbH, Berlin", email = "ak@tigon.cc" }]
+license = { text = "Apache-2.0" }
+dependencies = [
+    "pypdf>=4.0",
+    "pdfminer.six>=20231228",
+    "tiktoken>=0.7",
+    "python-docx>=1.1",
+    "python-pptx>=0.6.23",
+    "openpyxl>=3.1",
+    "xlrd>=2.0",
+    "pyxlsb>=1.0",
+    "striprtf>=0.0.27",
+    "odfpy>=1.4",
+    "ebooklib>=0.18",
+    "beautifulsoup4>=4.12",
+    "lxml>=5.0",
+    "markdownify>=0.12",
+    "olefile>=0.47",
+    "Pillow>=10.0",
+    "rich>=13.7",
+]
+
+[project.scripts]
+poma-estimate = "poma_estimate.cli:run"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/poma_estimate"]
+
+[dependency-groups]
+dev = ["pyinstaller>=6.0", "pytest>=8.0"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
