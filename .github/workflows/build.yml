@@ -22,19 +22,17 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: astral-sh/setup-uv@v5
         with:
-          python-version: "3.12"
-      - name: Install deps
-        run: |
-          python -m pip install --upgrade pip
-          pip install -e .
-          pip install pyinstaller
+          version: "0.8.15"
+      - name: Install deps (uv-managed Python: OpenSSL is linked statically, so PyInstaller
+          cannot bundle a stale libssl next to the cryptography wheel's own copy)
+        run: uv sync --python 3.12 --group dev
       - name: Build
         shell: bash
         run: |
           SEP=":"; [ "$RUNNER_OS" = "Windows" ] && SEP=";"
-          pyinstaller --onefile \
+          uv run pyinstaller --onefile \
             --name "${{ matrix.artifact }}" \
             --hidden-import tiktoken_ext.openai_public \
             --hidden-import tiktoken_ext \
@@ -47,9 +45,9 @@ jobs:
         shell: bash
         run: |
           mkdir smoke
-          python -c "open('smoke/a.txt','w').write('hello world ' * 3000)"
+          uv run python -c "open('smoke/a.txt','w').write('hello world ' * 3000)"
           ./dist/${{ matrix.artifact }}* smoke --json > out.json
-          python -c "import json; d=json.load(open('out.json')); assert d['total_units']>=5 and d['files_measured']==1 and not d['files'][0]['error'], d"
+          uv run python -c "import json; d=json.load(open('out.json')); assert d['total_units']>=5 and d['files_measured']==1 and not d['files'][0]['error'], d"
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}
