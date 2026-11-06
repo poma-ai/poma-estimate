@@ -11,7 +11,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: macos-14            # arm64
+          - os: macos-15            # arm64
             artifact: poma-estimate-macos-arm64
           - os: macos-15-intel      # x86_64
             artifact: poma-estimate-macos-x86_64
