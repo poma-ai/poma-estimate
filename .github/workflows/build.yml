@@ -1,5 +1,8 @@
 name: Build binaries
 
+permissions:
+  contents: read
+
 on:
   push:
     tags: ["v*"]
@@ -25,20 +28,22 @@ jobs:
       - uses: astral-sh/setup-uv@v5
         with:
           version: "0.8.15"
-      # uv-managed Python links OpenSSL statically, so PyInstaller cannot bundle a stale
-      # libssl next to the cryptography wheel's own copy (the v0.2.0 macOS x86_64 failure).
+      # uv picks the runner's installed CPython 3.12 where there is one (macOS, Windows) and
+      # downloads a managed one otherwise (Linux); --locked refuses to build from a drifted lock.
       - name: Install deps
         if: matrix.os != 'macos-15-intel'
-        run: uv sync --python 3.12 --group dev
+        run: uv sync --locked --python 3.12 --group dev
       # No macOS x86_64 wheel exists for cryptography, so it is compiled here. Link OpenSSL
       # statically: otherwise PyInstaller bundles a libssl.3.dylib that does not match the one
       # the compiled module was linked against (v0.2.0 smoke test: SSL_get0_group_name missing).
+      # --no-cache: uv's built-wheel cache does not key on OPENSSL_STATIC, so a cached dynamic
+      # build (restored by setup-uv) would silently come back.
       - name: Install deps (macOS x86_64, static OpenSSL for the cryptography build)
         if: matrix.os == 'macos-15-intel'
         env:
           OPENSSL_STATIC: "1"
           OPENSSL_DIR: /usr/local/opt/openssl@3
-        run: uv sync --python 3.12 --group dev --no-cache-dir
+        run: uv sync --locked --python 3.12 --group dev --no-cache
       - name: Build
         shell: bash
         run: |
@@ -58,6 +63,8 @@ jobs:
           mkdir smoke
           uv run python -c "open('smoke/a.txt','w').write('hello world ' * 3000)"
           ./dist/${{ matrix.artifact }}* smoke --json > out.json
+          ./dist/${{ matrix.artifact }}* --version
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then ./dist/${{ matrix.artifact }}* --version | grep -qF "${GITHUB_REF_NAME#v}"; fi
           uv run python -c "import json; d=json.load(open('out.json')); assert d['total_units']>=5 and d['files_measured']==1 and not d['files'][0]['error'], d"
       - uses: actions/upload-artifact@v4
         with:

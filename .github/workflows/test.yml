@@ -1,5 +1,8 @@
 name: Tests (macOS, Linux, Windows)
 
+permissions:
+  contents: read
+
 on:
   push:
     branches: ["main"]
@@ -19,7 +22,7 @@ jobs:
         with:
           version: "0.8.15"
       - name: Tests
-        run: uv run --python 3.12 pytest -q
+        run: uv run --locked --python 3.12 pytest -q
       - name: CLI smoke test (the colleague workflow)
         shell: bash
         run: |
