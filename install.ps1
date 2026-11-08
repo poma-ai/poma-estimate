@@ -22,5 +22,5 @@ try {
   if (Test-Path $tmp) { Remove-Item -Force $tmp }
 }
 Unblock-File $exe
-$folder = (Read-Host "Paste the folder path to scan (e.g. C:\Users\you\Documents), then press Enter").Trim('"')
+$folder = (Read-Host "Paste the folder path to scan (e.g. C:\Users\you\Documents), then press Enter").Trim().Trim('"').Trim("'")
 & $exe $folder

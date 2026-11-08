@@ -59,11 +59,11 @@ to stderr as it goes (Ctrl-C once it is exact enough), then the result on
 stdout (illustrative output):
 
 ```
-    28.8s  walked, size-based guess           ~750,000 units (rough guess)
-    63.0s  sample 1%                          ~750,000 units (±10%)
-    82.8s  sample 10%                         ~780,000 units (±6%)
-   179.1s  sample 30%                         ~740,000 units (±3%)
-   505.3s  all files                          ~740,000 units
+    28.8s  walked, size-based guess                     ~750,000 units (rough guess)
+    63.0s  1.0% measured (400/40,000 files)             ~750,000 units (±10%)   ~±3% by the time limit · all files in ~40 min
+    93.1s  4.8% measured (1,920/40,000 files)           ~780,000 units (±6%)    ~±3% by the time limit · all files in ~37 min
+   ...
+   600.0s  31.0% measured (12,400/40,000 files) (time budget reached) ~740,000 units (±3%)  all files in ~24 min
 units 740,000
 PDF: ...  (one line of counts per file type, see below)
 ```
@@ -92,7 +92,10 @@ in total.
    extrapolate, with a 95% error bar.
 3. Stop when every file has been measured or when `--budget` seconds
    (default 600) are used up, whichever comes first. Pressing Ctrl-C stops
-   early and prints the best estimate so far. Small folders are measured
+   early and prints the best estimate so far. Every progress line forecasts
+   the error bar at the time limit and how long measuring every file would
+   take (from the time each file type took so far), so you can decide to
+   wait, stop, or re-run with a larger `--budget`. Small folders are measured
    completely. While sampling, the error bar assumes no extreme outlier
    files among the unmeasured ones; very large text files and audio/video
    without duration headers are always estimated, never read in full.
@@ -176,9 +179,11 @@ Windows builds run in CI — `.github/workflows/build.yml`.
   may push the per-page unit count higher on text-dense scans.
 - Image-description bands for **image-as-document** inputs are
   extrapolated, not measured; the calibration corpus is all PDFs.
-- `.doc` extraction is naive OLE-stream filtering — accurate to within
-  ~10–20% on token count, which is fine for the estimate but
-  not a substitute for `antiword` / LibreOffice if you need exact text.
+- `.doc` (Word 97 and later) text is read from the document's piece table;
+  token counts match LibreOffice's text export within ~1–3% on the files
+  tested, page counts are estimated from text length. Older Word 6/95 files
+  fall back to a rough scan and are marked approximate; encrypted ones are
+  counted by size.
 - Not yet supported (would need heavyweight dependencies for marginal
   accuracy): `ppt`, `pps`, `pub` (legacy MS Office binary), `pages` /
   `numbers` / `key` (iWork), `vsd` / `vsdx` (Visio), `dwg` / `dxf` (CAD),

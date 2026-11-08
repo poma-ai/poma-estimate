@@ -25,6 +25,7 @@ FRACTIONS = (0.01, 0.03, 0.10, 0.30, 1.0)
 MIN_PER_STRATUM = 3
 Z95 = 1.96
 EMIT_INTERVAL = 1.5  # seconds between progress lines (the last one always prints)
+PROGRESS_INTERVAL = 30.0  # seconds between progress lines inside one long sampling stage
 
 
 @dataclass
@@ -53,6 +54,40 @@ class Estimate:
     unreadable_files: int = 0
     stopped: str | None = None
     counts: dict | None = None  # per file-type group counts (measures.py), same extrapolation as `expected`
+    # Projections from the measuring rate so far (None until there is a rate): seconds until every
+    # file is measured, and the error bar expected when the time budget runs out.
+    eta_all: float | None = None
+    rel_err_at_budget: float | None = None
+    var_sampling: float = 0.0  # variance from sampling within measured strata: shrinks ~ (1 - n/N) / n
+    var_floor: float = 0.0  # size-model floors and unmeasured strata: shrink ~ (1 - n/N)^2
+
+
+def project(est: Estimate, rate: float, seconds_left: float, done: int | None = None,
+            total: int | None = None) -> None:
+    """Fill est.eta_all / est.rel_err_at_budget from the measuring rate so far, scaling each
+    variance part as if files keep being measured uniformly at random (stratum shares ignored).
+    `done`/`total` and `rate` should cover only the sampled files: media files are all measured
+    in the first stage and are cheap, so counting them would overstate the throughput left."""
+    done = est.measured if done is None else done
+    total = est.total if total is None else total
+    if est.complete or rate <= 0 or done < 2 or total <= done or not est.expected:
+        return
+    est.eta_all = (total - done) / rate
+    n2 = min(total, done + rate * max(0.0, seconds_left))
+    if n2 >= total:
+        est.rel_err_at_budget = 0.0
+        return
+    f1, f2 = done / total, n2 / total
+    var = (est.var_sampling * ((1 - f2) / n2) / ((1 - f1) / done)
+           + est.var_floor * ((1 - f2) / (1 - f1)) ** 2)
+    est.rel_err_at_budget = Z95 * math.sqrt(var) / est.expected
+
+
+def _timed(path: Path, fast: bool) -> tuple[FileResult, float]:
+    """estimate_one plus the seconds it took in its worker thread."""
+    t = time.monotonic()
+    r = estimate_one(path, fast)
+    return r, time.monotonic() - t
 
 
 def walk(root: Path, recursive: bool, include_icloud: bool, report: ScanReport,
@@ -151,7 +186,7 @@ def combine(
     elapsed: float,
     report: ScanReport,
 ) -> Estimate:
-    exp = lo = hi = var = 0.0
+    exp = lo = hi = var = var_floor = 0.0
     totals: dict = {}
     n_meas = n_tot = n_done = b_meas = b_tot = approx = errs = 0
     n_failed = sum(len(v) for v in failed.values())
@@ -177,7 +212,7 @@ def combine(
             exp += g
             lo += g * 0.5
             hi += g * 2
-            var += (0.5 * g) ** 2
+            var_floor += (0.5 * g) ** 2
             for e in ents:
                 M.add_unmeasured(totals, M.group_of(e.ext, _classify(e.ext)), 1, e.size)
             continue
@@ -204,8 +239,8 @@ def combine(
         # Zero observed variance proves nothing about unseen files: add a
         # size-based floor (20% of what the rough model says is unmeasured).
         unseen = sum(rough_units(e.ext, e.size) for e in ents) * (1 - n / N)
-        var += (0.2 * unseen) ** 2
-    half = Z95 * math.sqrt(var)
+        var_floor += (0.2 * unseen) ** 2
+    half = Z95 * math.sqrt(var + var_floor)
     complete = n_done >= n_tot and not report.walk_incomplete and report.unreadable_dirs == 0
     tight = exp > 0 and (hi - lo) <= 0.01 * exp
     return Estimate(
@@ -217,6 +252,7 @@ def combine(
         measured_bytes=b_meas, total_bytes=b_tot, stage=stage, elapsed=elapsed,
         approx_files=approx, unreadable_dirs=report.unreadable_dirs,
         unreadable_files=errs + n_failed, counts=M.rounded(totals),
+        var_sampling=var, var_floor=var_floor,
     )
 
 
@@ -256,7 +292,45 @@ def scan_progressive(
 
     pool = ThreadPoolExecutor(max_workers=workers)
     last_emit = time.monotonic()
+    cost: dict[tuple, list] = defaultdict(lambda: [0.0, 0])  # per stratum: worker-seconds, files timed
     stop = None  # None | "time budget reached" | "stopped by user"
+    sampled_keys = [k for k in strata if _classify(k[0]) != "media"]
+    sampled_total = sum(len(strata[k]) for k in sampled_keys)
+
+    def snapshot(label: str) -> Estimate:
+        now = time.monotonic()
+        e = combine(strata, measured, failed, label, now - t0, report)
+        # Remaining work = files left in each stratum x that stratum's mean worker-seconds per file
+        # (the overall mean where none was timed yet), spread over the workers. Per stratum, because
+        # costs differ by orders of magnitude between types and sizes; worker time, so idle time and
+        # strata already finished do not distort it.
+        t_all = sum(c[0] for c in cost.values())
+        n_all = sum(c[1] for c in cost.values())
+        if n_all < 2 or t_all <= 0:
+            return e
+        mean_all = t_all / n_all
+        media_s = docs_s = 0.0
+        docs_left = 0
+        for k, ents in strata.items():
+            left = len(ents) - len(measured.get(k, ())) - len(failed.get(k, ()))
+            if left <= 0:
+                continue
+            c = cost.get(k)
+            s_k = left * (c[0] / c[1] if c and c[1] else mean_all) / workers
+            if _classify(k[0]) == "media":
+                media_s += s_k
+            else:
+                docs_s += s_k
+                docs_left += left
+        done = sampled_total - docs_left
+        # media are all queued in the first stage, so their remaining time comes off the budget first
+        project(e, docs_left / docs_s if docs_s > 0 else 0.0, deadline - now - media_s, done, sampled_total)
+        if e.eta_all is not None:
+            e.eta_all += media_s
+        elif media_s > 0 and not e.complete:
+            e.eta_all = media_s
+        return e
+
     try:
         for frac in FRACTIONS:
             todo = []
@@ -278,7 +352,7 @@ def scan_progressive(
                     if nxt is None:
                         exhausted = True
                         break
-                    pending[pool.submit(estimate_one, nxt[1].path, fast)] = (nxt[0], nxt[1])
+                    pending[pool.submit(_timed, nxt[1].path, fast)] = (nxt[0], nxt[1])
                 if time.monotonic() >= deadline:
                     stop = "time budget reached"
                     exhausted = True
@@ -288,19 +362,24 @@ def scan_progressive(
                 for f in done:
                     key, ent = pending.pop(f)
                     try:
-                        r = f.result()
+                        r, dt = f.result()
                     except Exception:
                         failed[key].add(ent.path)
                         continue
+                    cost[key][0] += dt
+                    cost[key][1] += 1
                     if r.detail.get("kind") == "skipped":
                         failed[key].add(ent.path)
                     else:
                         measured[key].append(r)
                 if stop and time.monotonic() > deadline + 10:
                     break  # in-flight stragglers are abandoned (caller exits the process)
+                if not stop and time.monotonic() - last_emit >= PROGRESS_INTERVAL:
+                    emit(snapshot("measuring"))  # a long stage still shows the estimate moving
+                    last_emit = time.monotonic()
             now = time.monotonic()
             label = f"sample {int(frac * 100)}%" if frac < 1 else "all files"
-            est = combine(strata, measured, failed, label, now - t0, report)
+            est = snapshot(label)
             if now - last_emit >= EMIT_INTERVAL or est.complete or stop:
                 emit(est)
                 last_emit = now
@@ -310,9 +389,9 @@ def scan_progressive(
         stop = "stopped by user"
     finally:
         pool.shutdown(wait=False, cancel_futures=True)
-    est = combine(strata, measured, failed, est.stage + (f" ({stop})" if stop else ""),
-                  time.monotonic() - t0, report)
+    est = snapshot(est.stage + (f" ({stop})" if stop else ""))
     est.stopped = stop
+    est.rel_err_at_budget = None  # nothing more will be measured
     if stop:
         emit(est)
     report.results = sorted((r for v in measured.values() for r in v), key=lambda r: str(r.path))

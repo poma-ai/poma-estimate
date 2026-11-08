@@ -15,6 +15,7 @@ from rich.console import Console
 logging.getLogger("pdfminer").setLevel(logging.ERROR)
 logging.getLogger("pypdf").setLevel(logging.ERROR)
 warnings.filterwarnings("ignore", category=UserWarning, module="openpyxl")
+warnings.filterwarnings("ignore", module="PIL")  # large-image and corrupt-EXIF notices: noise for an estimate
 
 from poma_estimate import __version__
 from poma_estimate.output import archive_summary, render_json, render_table, render_two_numbers, stage_line
@@ -111,6 +112,8 @@ def main(argv: list[str] | None = None) -> int:
             raw = re.sub(r"\\(.)", r"\1", raw)
         args.path = Path(raw).expanduser()
     root: Path = args.path.resolve()
+    if not root.exists() and str(args.path).strip() != str(args.path):
+        root = Path(str(args.path).strip()).expanduser().resolve()  # a dragged path carries a trailing space
     if not root.exists():
         print(f"error: path does not exist: {root}", file=sys.stderr)
         return 2
@@ -118,7 +121,8 @@ def main(argv: list[str] | None = None) -> int:
     console = Console(stderr=False)
     err = Console(stderr=True, highlight=False, width=200)
     if not args.json:
-        err.print(f"Scanning {root}…", style="dim", markup=False)
+        err.print(f"Scanning {root}… (press Ctrl+C at any time to stop and keep the estimate so far)",
+                  style="dim", markup=False)
 
     def on_stage(est) -> None:
         err.print(stage_line(est), style="dim", markup=False)
@@ -138,6 +142,11 @@ def main(argv: list[str] | None = None) -> int:
     if args.verbose:
         render_table(report, est, root, err)  # the table is context: stderr, so stdout stays two lines
     render_two_numbers(est, console)
+    if est.stopped == "time budget reached" and est.eta_all:
+        more = int(est.elapsed + est.eta_all * 1.2) // 60 * 60 + 60
+        err.print(f"The time limit ({args.budget:.0f} s) ended the scan with {est.measured:,} of {est.total:,} files "
+                  f"measured. Measuring every file would take about {more // 60} min in total: run again with "
+                  f"--budget {more} for a tighter estimate (Ctrl+C still stops early).", markup=False)
     if report.unreadable_dirs or report.walk_incomplete:
         err.print(f"warning: {report.unreadable_dirs:,} folder(s) could not be read"
                   + (" and the folder walk was cut short" if report.walk_incomplete else "")

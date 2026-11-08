@@ -42,7 +42,8 @@ if [ $# -gt 0 ]; then
   exec "$DIR/poma-estimate" "$@"
 fi
 if folder_in="$( (printf 'Drag the folder to scan into this window, then press Enter: ' >/dev/tty; IFS= read -r l </dev/tty && printf '%s' "$l") 2>/dev/null)" && [ -n "$folder_in" ]; then
-  folder="$(printf '%s' "$folder_in" | sed "s/^[\"']//; s/[\"']\$//; s/\\\\\(.\)/\1/g")"
+  # Finder drag-and-drop appends a space (and may quote or backslash-escape): trim, unquote, unescape.
+  folder="$(printf '%s' "$folder_in" | sed "s/^[[:space:]]*//; s/[[:space:]]*\$//; s/^[\"']//; s/[\"']\$//; s/\\\\\(.\)/\1/g")"
   case "$folder" in "~"*) folder="$HOME${folder#\~}" ;; esac
   exec "$DIR/poma-estimate" "$folder"
 fi

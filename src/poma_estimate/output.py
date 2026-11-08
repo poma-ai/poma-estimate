@@ -46,10 +46,29 @@ def headline(est) -> str:
 def stage_line(est) -> str:
     """One progress line per stage, printed as the estimate homes in."""
     if est.measured == 0:
-        how = "size-based guess"
-    else:
-        how = f"{est.measured:,}/{est.total:,} files measured"
-    return f"  {est.elapsed:6.1f}s  {est.stage:<40} {headline(est):<30} {how}"
+        what = "walked, size-based guess"
+    elif est.complete and not est.unreadable_files:
+        what = "all files measured"
+    elif est.complete:
+        what = f"all files visited ({est.unreadable_files:,} could not be read)"
+    else:  # the share actually measured, not the stage's target share
+        what = f"{100 * est.measured / max(1, est.total):.1f}% measured ({est.measured:,}/{est.total:,} files)"
+    if est.stopped:
+        what += f" ({est.stopped})"
+    ahead = []
+    if est.rel_err_at_budget is not None and est.rel_err_at_budget < est.rel_err - 0.005:
+        ahead.append(f"~±{max(1, round(est.rel_err_at_budget * 100))}% by the time limit")
+    if est.eta_all is not None:
+        ahead.append(f"all files in ~{_duration(est.eta_all)}")
+    return f"  {est.elapsed:6.1f}s  {what:<44} {headline(est):<30} {' · '.join(ahead)}".rstrip()
+
+
+def _duration(s: float) -> str:
+    if s < 90:
+        return f"{max(1, round(s))} s"
+    if s < 5400:
+        return f"{round(s / 60)} min"
+    return f"{s / 3600:.1f} h"
 
 
 COUNTS_SCHEMA = "counts-1"  # version of the per-group count fields in --json

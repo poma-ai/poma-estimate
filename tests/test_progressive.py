@@ -110,3 +110,22 @@ def test_identical_samples_still_carry_uncertainty(tmp_path):
         pg.EMIT_INTERVAL = 1.5
     first = next(s for s in stages if 0 < s.measured < s.total)
     assert first.rel_err > 0.05
+
+
+def test_projection_scales_sampling_and_floor_parts():
+    from poma_estimate.output import stage_line
+    from poma_estimate.progressive import Estimate, Z95, project
+
+    est = Estimate(expected=1000.0, low=0, high=0, rel_err=0.0, complete=False, exact=False, measured=100,
+                   total=1000, measured_bytes=0, total_bytes=0, stage="measuring", elapsed=10.0,
+                   var_sampling=100.0 ** 2, var_floor=50.0 ** 2)
+    est.rel_err = Z95 * (100.0 ** 2 + 50.0 ** 2) ** 0.5 / 1000
+    project(est, rate=10.0, seconds_left=40.0)  # 400 more files: n 100 -> 500 of 1,000
+    assert est.eta_all == 90.0
+    k_s = (0.5 / 500) / (0.9 / 100)
+    k_f = (0.5 / 0.9) ** 2
+    assert abs(est.rel_err_at_budget - Z95 * (100.0 ** 2 * k_s + 50.0 ** 2 * k_f) ** 0.5 / 1000) < 1e-12
+    line = stage_line(est)
+    assert "10.0% measured (100/1,000 files)" in line and "by the time limit" in line and "all files in ~2 min" in line
+    project(est, rate=10.0, seconds_left=1e6)
+    assert est.rel_err_at_budget == 0.0
