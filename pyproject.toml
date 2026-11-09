@@ -1,6 +1,6 @@
 [project]
 name = "poma-estimate"
-version = "0.2.2"
+version = "0.2.3"
 description = "Scan a folder and count POMA units per file before uploading."
 readme = "README.md"
 requires-python = ">=3.11"

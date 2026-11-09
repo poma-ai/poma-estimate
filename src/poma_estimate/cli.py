@@ -68,7 +68,7 @@ def _build_parser() -> argparse.ArgumentParser:
         type=_positive_int,
         default=min(8, os.cpu_count() or 1),
         help=(
-            "parallel worker threads for per-file estimation. "
+            "parallel worker processes for per-file estimation. "
             "Default: min(8, CPU count)."
         ),
     )
@@ -134,6 +134,7 @@ def main(argv: list[str] | None = None) -> int:
         workers=args.workers,
         budget=args.budget,
         on_stage=on_stage,
+        processes=True,
     )
 
     if args.json:
@@ -143,24 +144,26 @@ def main(argv: list[str] | None = None) -> int:
         render_table(report, est, root, err)  # the table is context: stderr, so stdout stays two lines
     render_two_numbers(est, console)
     if est.stopped == "time budget reached" and est.eta_all:
-        more = int(est.elapsed + est.eta_all * 1.2) // 60 * 60 + 60
+        total = est.elapsed + est.eta_all
+        more = int(est.elapsed + est.eta_all * 1.2) // 60 * 60 + 60  # 20% headroom over the forecast
         err.print(f"The time limit ({args.budget:.0f} s) ended the scan with {est.measured:,} of {est.total:,} files "
-                  f"measured. Measuring every file would take about {more // 60} min in total: run again with "
-                  f"--budget {more} for a tighter estimate (Ctrl+C still stops early).", markup=False)
+                  f"measured. Measuring every file would take about {max(1, round(total / 60))} min in total: "
+                  f"run again with --budget {more} for a tighter estimate (Ctrl+C still stops early).", markup=False)
     if report.unreadable_dirs or report.walk_incomplete:
         err.print(f"warning: {report.unreadable_dirs:,} folder(s) could not be read"
                   + (" and the folder walk was cut short" if report.walk_incomplete else "")
                   + "; files in them are not counted.", markup=False)
     failed = sum(1 for r in report.results if r.error)
     if failed:
-        err.print(f"{failed:,} file(s) could not be read (for example password-protected or damaged) and are "
-                  f"counted by size only (details with --json or -v).", markup=False)
+        err.print(f"{failed:,} of the measured files could not be read (for example password-protected or damaged); "
+                  f"they and the files they stand for are counted by size only (details with --json or -v).",
+                  markup=False)
     a = archive_summary(report)
     if a["measured"]:
-        msg = (f"{a['measured']:,} archive(s) are counted by their estimated contents "
-               f"(~{a['unpacked_units_est']:,} units); POMA does not unpack archives, so unpack them before upload")
+        msg = (f"Archives are counted by their estimated contents (the {a['measured']:,} measured ones hold "
+               f"~{a['unpacked_units_est']:,} units); POMA does not unpack archives, so unpack them before upload")
         if a["not_listed"]:
-            msg += f"; {a['not_listed']:,} could not be listed and are estimated from their size"
+            msg += f"; {a['not_listed']:,} of the measured ones could not be listed and are estimated from their size"
         err.print(msg + ".", style="dim", markup=False)
     return 0
 
@@ -186,6 +189,8 @@ def _reap_children() -> None:
 def run() -> None:
     """Entry point: exit hard after flushing, so a worker thread stuck in a
     broken file can never keep the process alive past the time budget."""
+    import multiprocessing
+    multiprocessing.freeze_support()  # the frozen binary re-runs itself as each worker process
     rc = 1
     try:
         try:

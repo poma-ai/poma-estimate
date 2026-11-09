@@ -59,11 +59,11 @@ to stderr as it goes (Ctrl-C once it is exact enough), then the result on
 stdout (illustrative output):
 
 ```
-    28.8s  walked, size-based guess                     ~750,000 units (rough guess)
-    63.0s  1.0% measured (400/40,000 files)             ~750,000 units (±10%)   ~±3% by the time limit · all files in ~40 min
-    93.1s  4.8% measured (1,920/40,000 files)           ~780,000 units (±6%)    ~±3% by the time limit · all files in ~37 min
+     0.4s  walked, size-based guess                     ~2,100,000 units (rough guess)
+     9.0s  1.4% measured (560/40,000 files)             ~760,000 units (±42%)          ~±12% by the time limit · all files in ~31 min
+    40.2s  6.1% measured (2,440/40,000 files)           ~750,000 units (±27%)          ~±11% by the time limit · all files in ~27 min
    ...
-   600.0s  31.0% measured (12,400/40,000 files) (time budget reached) ~740,000 units (±3%)  all files in ~24 min
+   608.3s  48.0% measured (19,200/40,000 files) (time budget reached) ~740,000 units (±10%)  all files in ~11 min
 units 740,000
 PDF: ...  (one line of counts per file type, see below)
 ```

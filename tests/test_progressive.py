@@ -129,3 +129,57 @@ def test_projection_scales_sampling_and_floor_parts():
     assert "10.0% measured (100/1,000 files)" in line and "by the time limit" in line and "all files in ~2 min" in line
     project(est, rate=10.0, seconds_left=1e6)
     assert est.rel_err_at_budget == 0.0
+
+
+
+def test_band_of_measured_strata_ignores_size_model_bias(monkeypatch):
+    """Once every stratum has samples, a size model that is 10x off must not widen the band."""
+    import poma_estimate.progressive as pg
+    from poma_estimate.credit_math import CreditBand
+    from poma_estimate.scan import FileResult, ScanReport
+
+    ents = [pg.Entry(Path(f"/x/f{i}.txt"), "txt", 4000 + i) for i in range(200)]
+    strata = {("txt", 6): ents}
+    measured = {("txt", 6): [FileResult(e.path, "txt", e.size, CreditBand(u, u, u), {})
+                             for e, u in zip(ents[:20], [3, 4, 5, 6, 4] * 4)]}
+    real = pg.rough_units
+
+    def rel(scale):
+        monkeypatch.setattr(pg, "rough_units", lambda ext, size: scale * real(ext, size))
+        return pg.combine(strata, measured, {}, "t", 0.0, ScanReport()).rel_err
+
+    assert 0 < rel(1.0) == rel(10.0) < 1
+
+
+def test_process_pool_matches_threads(tmp_path):
+    for i in range(30):
+        (tmp_path / f"f{i}.txt").write_text("word " * (300 + i * 50))
+    _, a = scan_progressive(tmp_path, workers=2)
+    _, b = scan_progressive(tmp_path, workers=2, processes=True)
+    assert a.complete and b.complete and a.expected == b.expected and a.counts == b.counts
+
+
+def test_process_pool_survives_a_crashing_worker(tmp_path, monkeypatch):
+    """A worker that dies (native crash, killed for memory) costs only its file, not the scan."""
+    site = tmp_path / "site"
+    site.mkdir()
+    (site / "sitecustomize.py").write_text(
+        "import os, poma_estimate.scan as sc\n"
+        "_real = sc.estimate_one\n"
+        "def _crash(path, fast=False):\n"
+        "    if path.name == 'crash.txt':\n"
+        "        os._exit(9)\n"
+        "    return _real(path, fast)\n"
+        "sc.estimate_one = _crash\n")
+    data = tmp_path / "data"
+    data.mkdir()
+    for i in range(40):
+        (data / f"f{i}.txt").write_text("word " * (300 + i))
+    (data / "crash.txt").write_text("word " * 300)
+    monkeypatch.setenv("PYTHONPATH", os.pathsep.join([str(site), os.environ.get("PYTHONPATH", "")]))
+    report, est = scan_progressive(data, workers=2, processes=True)
+    assert est.complete and est.stopped is None and est.total == 41 and est.unreadable_files == 1
+    crashed = [r for r in report.results if r.error]
+    assert [r.path.name for r in crashed] == ["crash.txt"]  # only the crashing file, and it still counts by size
+    assert est.expected == sum(r.band.expected for r in report.results if not r.error) + progressive.rough_units(
+        "txt", crashed[0].size_bytes)
